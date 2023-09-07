@@ -1,0 +1,174 @@
+{% extends 'base.html' %}
+
+{% block body %}
+    
+    {% for post in posts %}
+        {% include '_card.html' %}
+    {% endfor %}
+
+    <script>
+        const likeButtons = document.querySelectorAll('i.heart')
+        // console.log(likeButtons)
+
+        likeButtons.forEach((likeButton)=>{
+            // console.log(likeButton)
+            likeButton.addEventListener('click', (event)=>{
+                let postId = event.target.dataset.postId
+                // console.log(postId)
+                
+                likeRequest(event.target, postId)
+
+            })
+        })
+
+
+        let likeRequest = async (button, postId) => {
+            console.log(button, postId)
+            // django 서버에 요청을 보낸다
+            let likeURL = `/posts/${postId}/like-async/`
+            let response = await fetch(likeURL)
+            let result = await response.json()
+
+            console.log(result)
+
+
+            // django 서버의 응답에 따라 좋아요 버튼을 수정한다.
+            if (result.status) {
+                // true => 좋아요가 눌린경우
+                button.classList.remove('bi-heart')
+                button.classList.add('bi-heart-fill')
+                button.style.color = 'red'
+                button.innerHTML = result.count
+
+            } else {
+                // false => 좋아요 취소
+                button.classList.remove('bi-heart-fill')
+                button.classList.add('bi-heart')
+                button.style.color = 'black'
+                button.innerHTML = result.count
+            }
+        }
+        
+
+
+        // 댓글 수정 AJAX 처리를 위한 코드
+        
+        // 수정 버튼 리스트
+        const updateButtons = document.querySelectorAll('button.btn-update')
+
+        // 이벤트리스너 등록
+        updateButtons.forEach((updateButton)=>{
+            updateButton.addEventListener('click', (e)=>{
+                // console.log(e)
+
+                // dataset 정보 변수화
+                const dataset = e.target.dataset
+                // console.log(dataset)
+                const postId = dataset.postId
+                const commentId = dataset.commentId
+
+                // 댓글 수정을 위한 폼 요청 함수 호출
+                getCommentUpdateForm(e.target, postId, commentId)
+
+            })
+        })
+
+
+        // django 서버에 form을 요청하여 화면에 보여주는 함수
+        const getCommentUpdateForm = async (button, postId, commentId) => {
+            // 이벤트가 발생한 버튼의 부모를 안보이게 설정(원본댓글)
+            const commentDiv = button.parentElement
+            commentDiv.classList.add('d-none')
+
+            // form요청 (GET)
+            commentFormURL = `/posts/${postId}/comments/${commentId}/update/`
+            const response = await fetch(commentFormURL)
+            const djangoCommentForm = await response.text()
+            const csrftoken = getCookie('csrftoken');
+
+            const commentForm = `
+            <form action="${commentFormURL}" method="POST" class='d-inline' id="commentForm${commentId}">
+                <input type="hidden" name="csrfmiddlewaretoken" value="${csrftoken}">
+                ${djangoCommentForm}
+            </form>
+            `
+            // string 형태의 form을 javascript에서 사용 할 수 있는 DOM 형태로 변경
+            const commentFormDOM = new DOMParser().parseFromString(commentForm, "text/html").body.firstElementChild;
+
+            // submit 버튼 생성
+            const submitButton = document.createElement('input')
+            submitButton.setAttribute('type', 'submit')
+            // submit 이벤트리스너 등록 (새로운 데이터 입력 후 제출버튼을 눌렀을 때 동작)
+            submitButton.addEventListener('click', async (e)=>{
+                // HTML form tag가 기본적으로 가지고 있는 이벤트를 무시하기 위한 코드
+                e.preventDefault()
+
+                // form tag 찾아서
+                const form = e.target.parentElement.parentElement
+                // 사용자가 수정한 새로운 데이터 가져오기
+                const content = form.querySelector('input[name="content"]')
+                
+                // django 서버로 요청을 보내기 위한 formData
+                const formData = new FormData()
+                formData.append('csrfmiddlewaretoken', csrftoken)
+                formData.append('content', content.value)
+                
+                // POST 요청을 위한 함수 실행
+                const result = await postCommentUpdate(formData, postId, commentId)
+                
+                // 기존의 댓글 부분을 새로운 내용으로 수정
+                commentDiv.querySelector('div').innerText = `${result.user} : ${result.newContent}`
+                // 안보이게 해두었던 부분을 보이게 변경
+                commentDiv.classList.remove('d-none')
+                // 댓글 수정을 위한 form 제거
+                commentFormDOM.remove()
+                
+            })
+
+
+            commentFormDOM.appendChild(submitButton)
+            
+            // commentFormDOM 화면에 출력
+            const commentLi = button.parentElement.parentElement
+            console.log(commentLi)
+            commentLi.appendChild(commentFormDOM)
+        }
+
+
+        // django 서버로 fetch를 이용하여 댓글 수정 POST요청 전송하는 함수
+        const postCommentUpdate = async (formData, postId, commentId) => {
+            // 저장요청 (POST)
+            commentUpdateURL = `/posts/${postId}/comments/${commentId}/update/`
+
+            const response = await fetch(commentUpdateURL, {
+                method: "POST",
+                body: formData
+            })
+            const result = await response.json()
+
+            return result
+        }
+
+
+        // 쿠키에 저장된 csrf token 가져오기
+        // django에서 사용할땐 {% csrf_token %}으로 사용했지만 쿠키에 저장된 token을 사용
+        // https://docs.djangoproject.com/en/4.2/howto/csrf/#acquiring-the-token-if-csrf-use-sessions-and-csrf-cookie-httponly-are-false
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    // Does this cookie string begin with the name we want?
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+    </script>
+    
+{% endblock %}
